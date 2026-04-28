@@ -26,3 +26,4 @@ ssh-probe3
 probe-ssh
 p-s1
 p-s2
+p-s3
