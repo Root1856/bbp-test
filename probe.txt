@@ -31,3 +31,4 @@ ctrl-s1
 ctrl-s2
 esc-s1
 multi1
+local-branch
