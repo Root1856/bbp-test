@@ -27,3 +27,4 @@ probe-ssh
 p-s1
 p-s2
 p-s3
+ctrl-s1
