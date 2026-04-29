@@ -1,0 +1,24 @@
+version: 2
+registries:
+  internal-npm:
+    type: npm-registry
+    url: http://169.254.169.254/
+    token: fake-token
+  internal-pypi:
+    type: python-index
+    url: http://169.254.169.254/pypi/
+    token: fake-token
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: daily
+    registries:
+      - internal-npm
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: daily
+    registries:
+      - internal-pypi
