@@ -12,7 +12,7 @@ jobs:
         env:
           COMMENT_BODY: ${{ github.event.comment.body }}
         run: |
-          pt=$(echo "$COMMENT_BODY" | sed -n "s/.*--pipeline-type \([^ ]*\).*//p")
+          pt=$(printf '%s' "$COMMENT_BODY" | grep -oP '(?<=--pipeline-type )\S+' || true)
           [ -z "$pt" ] && pt="pipeline"
           echo "args=$pt" >> "$GITHUB_OUTPUT"
       - name: Execute (vulnerable expression injection)
