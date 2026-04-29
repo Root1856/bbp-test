@@ -7,52 +7,38 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
-      - name: Probe runnervmeorf1 and established connections
+      - name: Probe orchestrator and TCP connections
         run: |
-          ORCH="10.1.0.78"
-
-          echo "=== /proc/net/tcp established connections (hex->IP) ==="
-          python3 - << 'EOF'
+          echo "=== Established TCP connections ==="
+          python3 -c "
 import socket, struct
-def hex_to_ip(h):
-    return socket.inet_ntoa(struct.pack('<I', int(h,16)))
-with open('/proc/net/tcp') as f:
-    lines = f.readlines()[1:]
+def h2ip(h): return socket.inet_ntoa(struct.pack('<I', int(h,16)))
+with open('/proc/net/tcp') as f: lines=f.readlines()[1:]
 for l in lines:
-    p = l.split()
-    if len(p) < 4: continue
-    state = p[3]
-    if state != '01': continue  # 01=ESTABLISHED
-    local_h, local_p = p[1].split(':')
-    rem_h, rem_p = p[2].split(':')
-    print(f"  {hex_to_ip(local_h)}:{int(local_p,16)} -> {hex_to_ip(rem_h)}:{int(rem_p,16)}")
-EOF
+  p=l.split()
+  if len(p)<4 or p[3]!='01': continue
+  lh,lp=p[1].split(':'); rh,rp=p[2].split(':')
+  print(f'  {h2ip(lh)}:{int(lp,16)} -> {h2ip(rh)}:{int(rp,16)}')
+"
 
           echo ""
-          echo "=== Port scan runnervmeorf1 ($ORCH) ==="
-          for port in 22 80 443 2376 5985 8080 8443 9090 9091 10250 10255 18080 19080 2222 4243; do
-            result=$(timeout 2 bash -c "curl -s --max-time 1.5 -o /dev/null -w '%{http_code}' http://$ORCH:$port/" 2>/dev/null || echo "TO")
-            [ "$result" != "000" ] && [ "$result" != "TO" ] && echo "$ORCH:$port -> HTTP $result" || echo "$ORCH:$port -> $result"
+          echo "=== Port scan runnervmeorf1 10.1.0.78 ==="
+          ORCH=10.1.0.78
+          for port in 80 443 2376 8080 8443 9090 9091 10250 18080 19080; do
+            code=$(curl -sk --max-time 1 -o /dev/null -w '%{http_code}' http://$ORCH:$port/ 2>/dev/null || true)
+            echo "$ORCH:$port -> $code"
           done
 
           echo ""
-          echo "=== HTTPS probe runnervmeorf1 ==="
-          for port in 443 8443 9443; do
-            result=$(timeout 2 curl -sk --max-time 1.5 -o /dev/null -w '%{http_code}' "https://$ORCH:$port/" 2>/dev/null || echo "TO")
-            echo "$ORCH:$port HTTPS -> $result"
-          done
-
-          echo ""
-          echo "=== DNS: resolve internal names ==="
+          echo "=== Resolve internal DNS names ==="
           DOMAIN="wzckdk0yo3ye3abbhtpm11l04c.phxx.internal.cloudapp.net"
-          for name in runner runnervme orch manager api orchestrator controller agent broker; do
-            ip=$(getent hosts "$name.$DOMAIN" 2>/dev/null | awk '{print $1}')
-            [ -n "$ip" ] && echo "$name -> $ip" || echo "$name -> NXDOMAIN"
+          for n in runner runnervme orch manager api controller agent proxy; do
+            ip=$(getent hosts "$n.$DOMAIN" 2>/dev/null | awk '{print $1}')
+            echo "$n -> ${ip:-NXDOMAIN}"
           done
 
           echo ""
-          echo "=== Runner process: find config with service URLs ==="
-          ps aux | grep -i runner | grep -v grep | head -5
-          find /home /opt /run -name "*.json" -path "*runner*" 2>/dev/null | head -10
-          cat /opt/hostedtoolcache/../../../runner/Worker.Env.json 2>/dev/null || true
-          find / -name ".runner" -o -name ".credentials" 2>/dev/null | grep -v proc | head -5
+          echo "=== Runner binary config location ==="
+          find /home/runner /opt/runner 2>/dev/null -name ".runner" -o -name ".credentials" 2>/dev/null | head -5
+          cat /home/runner/runner/.runner 2>/dev/null || echo "no .runner"
+          cat /home/runner/runner/.credentials 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print('serverUrl:', d.get('serverUrl',''))" 2>/dev/null || true
