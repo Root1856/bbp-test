@@ -1,0 +1,20 @@
+name: importer-issue-ops-repro
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  repro:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare arguments
+        id: prepare
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          pt=$(echo "$COMMENT_BODY" | sed -n "s/.*--pipeline-type \([^ ]*\).*//p")
+          [ -z "$pt" ] && pt="pipeline"
+          echo "args=$pt" >> "$GITHUB_OUTPUT"
+      - name: Execute (vulnerable expression injection)
+        run: |
+          echo "Running: gh actions-importer dry-run azure-devops ${{ steps.prepare.outputs.args }} --output-dir output"
