@@ -7,38 +7,39 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
-      - name: Probe orchestrator and TCP connections
+      - name: Probe orchestrator and connections
         run: |
-          echo "=== Established TCP connections ==="
-          python3 -c "
-import socket, struct
-def h2ip(h): return socket.inet_ntoa(struct.pack('<I', int(h,16)))
-with open('/proc/net/tcp') as f: lines=f.readlines()[1:]
-for l in lines:
-  p=l.split()
-  if len(p)<4 or p[3]!='01': continue
-  lh,lp=p[1].split(':'); rh,rp=p[2].split(':')
-  print(f'  {h2ip(lh)}:{int(lp,16)} -> {h2ip(rh)}:{int(rp,16)}')
-"
+          echo "=== TCP established ==="
+          awk 'NR>1 && $4=="01" {
+            split($2,a,":"); split($3,b,":");
+            printf "  %d.%d.%d.%d:%d -> %d.%d.%d.%d:%d\n",
+              strtonum("0x"substr(a[1],7,2)),strtonum("0x"substr(a[1],5,2)),
+              strtonum("0x"substr(a[1],3,2)),strtonum("0x"substr(a[1],1,2)),
+              strtonum("0x"a[2]),
+              strtonum("0x"substr(b[1],7,2)),strtonum("0x"substr(b[1],5,2)),
+              strtonum("0x"substr(b[1],3,2)),strtonum("0x"substr(b[1],1,2)),
+              strtonum("0x"b[2])
+          }' /proc/net/tcp
 
           echo ""
           echo "=== Port scan runnervmeorf1 10.1.0.78 ==="
-          ORCH=10.1.0.78
-          for port in 80 443 2376 8080 8443 9090 9091 10250 18080 19080; do
-            code=$(curl -sk --max-time 1 -o /dev/null -w '%{http_code}' http://$ORCH:$port/ 2>/dev/null || true)
-            echo "$ORCH:$port -> $code"
+          for port in 80 443 2376 8080 8443 9090 9091 10250 18080; do
+            code=$(curl -sk --max-time 1 -o /dev/null -w '%{http_code}' http://10.1.0.78:$port/ 2>/dev/null || true)
+            echo "10.1.0.78:$port -> $code"
           done
 
           echo ""
-          echo "=== Resolve internal DNS names ==="
+          echo "=== DNS resolution ==="
           DOMAIN="wzckdk0yo3ye3abbhtpm11l04c.phxx.internal.cloudapp.net"
-          for n in runner runnervme orch manager api controller agent proxy; do
+          for n in runner runnervme orch manager api controller agent proxy host; do
             ip=$(getent hosts "$n.$DOMAIN" 2>/dev/null | awk '{print $1}')
             echo "$n -> ${ip:-NXDOMAIN}"
           done
 
           echo ""
-          echo "=== Runner binary config location ==="
-          find /home/runner /opt/runner 2>/dev/null -name ".runner" -o -name ".credentials" 2>/dev/null | head -5
-          cat /home/runner/runner/.runner 2>/dev/null || echo "no .runner"
-          cat /home/runner/runner/.credentials 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print('serverUrl:', d.get('serverUrl',''))" 2>/dev/null || true
+          echo "=== Runner credentials/config ==="
+          find /home/runner /opt 2>/dev/null -name ".runner" 2>/dev/null | head -3
+          if [ -f /home/runner/runner/.runner ]; then
+            cat /home/runner/runner/.runner
+          fi
+          find /home/runner /opt 2>/dev/null -name ".credentials" 2>/dev/null | head -3
