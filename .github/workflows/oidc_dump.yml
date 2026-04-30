@@ -1,0 +1,38 @@
+name: oidc-token-dump
+on:
+  workflow_dispatch:
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get OIDC token with github.com audience  
+        run: |
+          # Try to get OIDC token with GitHub's own domain as audience
+          for aud in \
+            "https://github.com" \
+            "api.github.com" \
+            "github.com" \
+            "https://api.github.com" \
+            "broker.actions.githubusercontent.com"; do
+            echo "=== Audience: $aud ==="
+            TOKEN=$(curl -s -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$aud" | jq -r '.value // "FAILED"')
+            if [ "$TOKEN" != "FAILED" ] && [ -n "$TOKEN" ]; then
+              # Decode the JWT claims
+              CLAIMS=$(echo "$TOKEN" | cut -d. -f2 | base64 -d 2>/dev/null | python3 -m json.tool 2>/dev/null)
+              echo "Claims: $CLAIMS"
+              echo "Token prefix: ${TOKEN:0:50}..."
+              
+              # Try using this OIDC token to authenticate to GitHub API
+              echo ""
+              echo "--- Trying OIDC token as GitHub API auth ---"
+              curl -si -H "Authorization: Bearer $TOKEN" \
+                "https://api.github.com/user" 2>/dev/null | head -3
+            else
+              echo "Failed to get token"
+            fi
+            echo ""
+          done
