@@ -1,0 +1,47 @@
+name: oidc-internal-test
+on:
+  workflow_dispatch:
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  test-oidc:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get OIDC token and test internal APIs
+        run: |
+          echo "=== Actions runtime environment ==="
+          echo "ACTIONS_RUNTIME_URL: $ACTIONS_RUNTIME_URL"
+          echo "ACTIONS_RESULTS_URL: $ACTIONS_RESULTS_URL"
+          echo "RUNNER_ENVIRONMENT: $RUNNER_ENVIRONMENT"
+          
+          echo ""
+          echo "=== Get OIDC token ==="
+          OIDC_TOKEN=$(curl -s -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api.github.com" | jq -r .value)
+          
+          echo "Token prefix: ${OIDC_TOKEN:0:30}..."
+          echo "Token header: $(echo $OIDC_TOKEN | cut -d. -f1 | base64 -d 2>/dev/null)"
+          echo "Token claims: $(echo $OIDC_TOKEN | cut -d. -f2 | base64 -d 2>/dev/null)"
+          
+          echo ""
+          echo "=== Test OIDC token against GitHub API ==="
+          curl -si -H "Authorization: Bearer $OIDC_TOKEN" \
+            "https://api.github.com/user" | head -5
+          
+          echo ""
+          echo "=== Test ACTIONS_RUNTIME_TOKEN against runtime API ==="
+          echo "Runtime URL: $ACTIONS_RUNTIME_URL"
+          # Try to list jobs using the runtime token
+          curl -si -H "Authorization: Bearer $ACTIONS_RUNTIME_TOKEN" \
+            "${ACTIONS_RUNTIME_URL}_apis/distributedtask/hubs/pipelines/plans" 2>/dev/null | head -5
+          
+          echo ""
+          echo "=== Test access to Actions cache API ==="
+          curl -si -H "Authorization: Bearer $ACTIONS_RUNTIME_TOKEN" \
+            "${ACTIONS_RUNTIME_URL}_apis/artifactcache/cache" 2>/dev/null | head -5
+          
+          echo ""
+          echo "=== Azure IMDS ==="
+          curl -si -m 3 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" \
+            -H "Metadata: true" 2>/dev/null | head -10
