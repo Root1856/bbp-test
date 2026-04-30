@@ -4,136 +4,125 @@ on:
 jobs:
   test-windows-extraction:
     runs-on: windows-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Download archive with newline path
         shell: pwsh
         run: |
-          $headers = @{ Authorization = "Bearer ${{ secrets.GITHUB_TOKEN }}" }
+          $workDir = "$env:RUNNER_TEMP\ziptest"
+          New-Item -ItemType Directory -Path $workDir -Force | Out-Null
+          $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN" }
           $url = "https://api.github.com/repos/${{ github.repository }}/zipball/traversal-test"
-          Invoke-WebRequest -Uri $url -Headers $headers -OutFile "C:\test\archive.zip"
-          Write-Host "Downloaded archive"
-          Get-Item "C:\test\archive.zip"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          Invoke-WebRequest -Uri $url -Headers $headers -OutFile "$workDir\archive.zip"
+          Write-Host "Downloaded archive to $workDir\archive.zip"
+          Get-Item "$workDir\archive.zip"
 
-      - name: Inspect archive content (hex)
+      - name: Inspect ZIP entries (hex dump of names)
         shell: pwsh
         run: |
           Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $zip = [System.IO.Compression.ZipFile]::OpenRead("C:\test\archive.zip")
-          Write-Host "=== ZIP ENTRIES ==="
+          $workDir = "$env:RUNNER_TEMP\ziptest"
+          $zip = [System.IO.Compression.ZipFile]::OpenRead("$workDir\archive.zip")
+          Write-Host "=== ZIP ENTRIES (with hex) ==="
           foreach ($entry in $zip.Entries) {
             $nameBytes = [System.Text.Encoding]::UTF8.GetBytes($entry.FullName)
-            $hex = ($nameBytes | ForEach-Object { $_.ToString("x2") }) -join ""
-            Write-Host ("Entry: [" + $entry.FullName + "]")
-            Write-Host "  Hex: $hex"
-            Write-Host "  Length: $($nameBytes.Length)"
+            $hex = ($nameBytes | ForEach-Object { $_.ToString("x2") }) -join " "
+            Write-Host "Entry: [$($entry.FullName)]"
+            Write-Host "  Hex:  $hex"
+            Write-Host "  Has LF byte (0a): $(($nameBytes -contains 0x0A))"
           }
           $zip.Dispose()
 
-      - name: Test PowerShell Expand-Archive
+      - name: Test PowerShell Expand-Archive behavior
         shell: pwsh
         run: |
-          $dest = "C:\test\extracted_ps"
-          New-Item -ItemType Directory -Path $dest -Force
-          Write-Host "=== Testing PowerShell Expand-Archive ==="
+          $workDir = "$env:RUNNER_TEMP\ziptest"
+          $dest = "$workDir\extracted_ps"
+          New-Item -ItemType Directory -Path $dest -Force | Out-Null
+          Write-Host "=== PowerShell Expand-Archive ==="
+          Write-Host "Extracting to: $dest"
           try {
-            Expand-Archive -Path "C:\test\archive.zip" -DestinationPath $dest -Force
-            Write-Host "Extraction succeeded"
+            Expand-Archive -Path "$workDir\archive.zip" -DestinationPath $dest -Force
+            Write-Host "SUCCESS"
           } catch {
             Write-Host "EXCEPTION: $_"
           }
-          Write-Host "=== Files after PowerShell extraction ==="
-          Get-ChildItem -Recurse $dest | ForEach-Object {
-            Write-Host "  [$($_.FullName)]"
+          Write-Host ""
+          Write-Host "=== All files under $workDir ==="
+          Get-ChildItem -Recurse $workDir | ForEach-Object {
+            $relative = $_.FullName.Substring($workDir.Length)
+            Write-Host "  $relative"
           }
-          Write-Host "=== Root of C:\test ==="
-          Get-ChildItem "C:\test" -Recurse | ForEach-Object {
-            Write-Host "  [$($_.FullName)]"
+          Write-Host ""
+          Write-Host "=== Files in RUNNER_TEMP (outside ziptest) ==="
+          Get-ChildItem $env:RUNNER_TEMP | ForEach-Object {
+            Write-Host "  $($_.Name)"
           }
 
       - name: Test .NET ZipFile.ExtractToDirectory
         shell: pwsh
         run: |
           Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $dest = "C:\test\extracted_dotnet"
-          New-Item -ItemType Directory -Path $dest -Force
-          Write-Host "=== Testing .NET ZipFile.ExtractToDirectory ==="
+          $workDir = "$env:RUNNER_TEMP\ziptest"
+          $dest = "$workDir\extracted_dotnet"
+          New-Item -ItemType Directory -Path $dest -Force | Out-Null
+          Write-Host "=== .NET ZipFile.ExtractToDirectory ==="
           try {
-            [System.IO.Compression.ZipFile]::ExtractToDirectory("C:\test\archive.zip", $dest)
-            Write-Host "Extraction succeeded"
+            [System.IO.Compression.ZipFile]::ExtractToDirectory("$workDir\archive.zip", $dest)
+            Write-Host "SUCCESS"
           } catch {
             Write-Host "EXCEPTION: $_"
           }
-          Write-Host "=== Files after .NET extraction ==="
+          Write-Host ""
+          Write-Host "=== Files extracted ==="
           Get-ChildItem -Recurse $dest | ForEach-Object {
-            Write-Host "  [$($_.FullName)]"
+            Write-Host "  $($_.FullName.Substring($dest.Length))"
           }
 
-      - name: Test manual entry-by-entry extraction (.NET)
+      - name: Check if traversal.txt escaped (look in parent dirs)
+        shell: pwsh
+        run: |
+          $workDir = "$env:RUNNER_TEMP\ziptest"
+          $parentDir = $env:RUNNER_TEMP
+          Write-Host "=== Checking for traversal.txt outside ziptest ==="
+          Write-Host "ziptest contents:"
+          Get-ChildItem -Recurse $workDir -Filter "traversal.txt" | ForEach-Object {
+            Write-Host "  INSIDE: $($_.FullName)"
+          }
+          Write-Host "Parent ($parentDir) contents:"
+          Get-ChildItem $parentDir -Filter "traversal.txt" | ForEach-Object {
+            Write-Host "  *** ESCAPED to parent: $($_.FullName) ***"
+          }
+          Write-Host "All .txt files in parent dir:"
+          Get-ChildItem $parentDir | ForEach-Object {
+            Write-Host "  $($_.Name) [$($_.GetType().Name)]"
+          }
+
+      - name: Test naive extractor (strip newlines, resolve path)
         shell: pwsh
         run: |
           Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $dest = "C:\test\extracted_manual"
-          New-Item -ItemType Directory -Path $dest -Force
-          Write-Host "=== Testing manual .NET extraction (simulate vulnerable extractor) ==="
-          $zip = [System.IO.Compression.ZipFile]::OpenRead("C:\test\archive.zip")
+          $workDir = "$env:RUNNER_TEMP\ziptest"
+          $dest = "$workDir\extracted_naive"
+          New-Item -ItemType Directory -Path $dest -Force | Out-Null
+
+          Write-Host "=== Naive extractor simulation (strips LF from name) ==="
+          $zip = [System.IO.Compression.ZipFile]::OpenRead("$workDir\archive.zip")
           foreach ($entry in $zip.Entries) {
+            if ($entry.FullName.EndsWith("/")) { continue }
             $rawName = $entry.FullName
-            # Simulate: strip newline from filename (what a naive extractor might do)
             $stripped = $rawName -replace "`n", ""
-            $targetPath = Join-Path $dest $stripped
-            Write-Host "  Raw name: [$rawName]"
+            $targetPath = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($dest, $stripped))
+            Write-Host "  Raw:      [$rawName]"
             Write-Host "  Stripped: [$stripped]"
-            Write-Host "  Target:   [$targetPath]"
-            Write-Host "  Resolved: [$(Resolve-Path -Path $targetPath -ErrorAction SilentlyContinue)]"
-            # Check if target is outside $dest (traversal)
-            if ($targetPath.StartsWith($dest)) {
-              Write-Host "  SAFE: within extraction root"
+            Write-Host "  Resolved: [$targetPath]"
+            $isInside = $targetPath.StartsWith($dest + "\") -or $targetPath.Equals($dest)
+            if ($isInside) {
+              Write-Host "  SAFE: inside extraction root"
             } else {
-              Write-Host "  *** PATH TRAVERSAL: outside extraction root! ***"
+              Write-Host "  *** PATH TRAVERSAL CONFIRMED: outside $dest! ***"
+              Write-Host "  Would write to: $targetPath"
             }
           }
           $zip.Dispose()
-
-      - name: Test Win32 path normalization with trailing dots
-        shell: pwsh
-        run: |
-          Write-Host "=== Win32 trailing-dot normalization test ==="
-          $testDir = "C:\test\dottest"
-          # Try creating a directory named "safe.."
-          $pathWithDots = Join-Path $testDir "safe.."
-          New-Item -ItemType Directory -Path $testDir -Force
-          try {
-            New-Item -ItemType Directory -Path $pathWithDots -Force
-            Write-Host "Created directory: [$pathWithDots]"
-            $actual = Get-Item $pathWithDots
-            Write-Host "Actual resolved path: [$($actual.FullName)]"
-          } catch {
-            Write-Host "FAILED to create 'safe..': $_"
-          }
-          # Try creating a directory named "safe" then go up with ..
-          $safeDir = Join-Path $testDir "safe"
-          New-Item -ItemType Directory -Path $safeDir -Force
-          $traversalPath = Join-Path $safeDir "..\outside.txt"
-          Write-Host "Traversal path: [$traversalPath]"
-          $resolved = [System.IO.Path]::GetFullPath($traversalPath)
-          Write-Host "Resolved full path: [$resolved]"
-          Write-Host "Outside test dir? $(-not $resolved.StartsWith($testDir))"
-
-      - name: Check if traversal.txt landed outside expected directory
-        shell: pwsh
-        run: |
-          Write-Host "=== Final check for traversal evidence ==="
-          Write-Host "Contents of C:\test:"
-          Get-ChildItem "C:\test" -Recurse | Sort-Object FullName | ForEach-Object {
-            Write-Host "  $($_.FullName)"
-          }
-          # Check if traversal.txt exists at root level (would be C:\test\traversal.txt)
-          if (Test-Path "C:\traversal.txt") {
-            Write-Host "*** TRAVERSAL CONFIRMED: C:\traversal.txt exists! ***"
-          } elseif (Test-Path "C:\test\traversal.txt") {
-            Write-Host "*** TRAVERSAL CONFIRMED: C:\test\traversal.txt exists outside archive folder! ***"
-          } else {
-            Write-Host "No traversal.txt found outside archive subfolder."
-          }
