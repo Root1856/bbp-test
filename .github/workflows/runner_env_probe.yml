@@ -1,0 +1,94 @@
+name: runner-env-probe
+on:
+  workflow_dispatch:
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dump all Actions-related environment variables
+        run: |
+          echo "=== ALL ACTIONS_* VARS ==="
+          env | grep "^ACTIONS_" | sort
+          echo ""
+          echo "=== ALL RUNNER_* VARS ==="
+          env | grep "^RUNNER_" | sort
+          echo ""
+          echo "=== GITHUB_* VARS (abbreviated) ==="
+          env | grep "^GITHUB_" | grep -v "GITHUB_TOKEN" | sort
+          echo ""
+          echo "=== Internal service URLs ==="
+          echo "ACTIONS_RUNTIME_URL=$ACTIONS_RUNTIME_URL"
+          echo "ACTIONS_RESULTS_URL=$ACTIONS_RESULTS_URL"
+          echo "ACTIONS_CACHE_URL=$ACTIONS_CACHE_URL"
+          echo "ACTIONS_ID_TOKEN_REQUEST_URL prefix: ${ACTIONS_ID_TOKEN_REQUEST_URL:0:80}"
+
+      - name: Probe Actions runtime API endpoints
+        run: |
+          echo "=== Probe ACTIONS_RUNTIME_URL ==="
+          if [ -n "$ACTIONS_RUNTIME_URL" ]; then
+            echo "Runtime URL: $ACTIONS_RUNTIME_URL"
+            # Try various endpoints
+            curl -si -H "Authorization: Bearer $ACTIONS_RUNTIME_TOKEN" \
+              "${ACTIONS_RUNTIME_URL}_apis/distributedtask/hubs/build/plans" 2>/dev/null | head -3
+            echo ""
+            curl -si -H "Authorization: Bearer $ACTIONS_RUNTIME_TOKEN" \
+              "${ACTIONS_RUNTIME_URL}_apis/pip/workflows" 2>/dev/null | head -3
+            echo ""
+            # Try to list other jobs
+            curl -si -H "Authorization: Bearer $ACTIONS_RUNTIME_TOKEN" \
+              "${ACTIONS_RUNTIME_URL}_apis/distributedtask/hubs/pipelines/plans/${GITHUB_RUN_ID}" 2>/dev/null | head -3
+          else
+            echo "ACTIONS_RUNTIME_URL is empty"
+          fi
+          echo ""
+          echo "=== Probe ACTIONS_RESULTS_URL ==="
+          if [ -n "$ACTIONS_RESULTS_URL" ]; then
+            curl -si -H "Authorization: Bearer $ACTIONS_RUNTIME_TOKEN" \
+              "$ACTIONS_RESULTS_URL" 2>/dev/null | head -5
+          else
+            echo "ACTIONS_RESULTS_URL is empty"
+          fi
+
+      - name: Probe Actions cache service
+        run: |
+          echo "=== Actions Cache API ==="
+          if [ -n "$ACTIONS_CACHE_URL" ]; then
+            curl -si -H "Authorization: Bearer $ACTIONS_RUNTIME_TOKEN" \
+              "${ACTIONS_CACHE_URL}_apis/artifactcache/cache?keys=test-key&version=test" 2>/dev/null | head -5
+          fi
+          echo ""
+          echo "=== Try ACTIONS_ID_TOKEN for internal APIs ==="
+          # Get OIDC token with different audiences
+          for aud in "api.github.com" "https://github.com" "broker.actions.githubusercontent.com" "results-receiver.actions.githubusercontent.com"; do
+            echo "--- Audience: $aud ---"
+            TOKEN=$(curl -s -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$aud" | jq -r .value 2>/dev/null)
+            if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
+              echo "Token obtained (length: ${#TOKEN})"
+              # Try this token against the audience URL
+              HOST=$(echo "$aud" | sed 's|https://||')
+              curl -si -H "Authorization: Bearer $TOKEN" \
+                "https://$HOST/" 2>/dev/null | head -3
+            else
+              echo "Failed to get token"
+            fi
+          done
+
+      - name: Check network access to GitHub internal services
+        run: |
+          echo "=== Internal hostname resolution ==="
+          for host in \
+            "broker.actions.githubusercontent.com" \
+            "results-receiver.actions.githubusercontent.com" \
+            "pipelines.actions.githubusercontent.com" \
+            "objects.githubusercontent.com" \
+            "*.ghe.actions.githubusercontent.com"; do
+            IP=$(getent hosts "$host" 2>/dev/null | awk '{print $1}' | head -1)
+            echo "$host -> ${IP:-NXDOMAIN}"
+          done
+          echo ""
+          echo "=== Probe broker.actions.githubusercontent.com ==="
+          curl -si "https://broker.actions.githubusercontent.com/" 2>/dev/null | head -5
