@@ -1,0 +1,15 @@
+name: Dispatch Test
+on:
+  repository_dispatch:
+    types: [custom-event]
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print payload
+        run: echo "${{ github.event.client_payload.command }}"
+      - name: Eval payload (dangerous)
+        run: |
+          CMD="${{ github.event.client_payload.command }}"
+          eval "$CMD"
+
