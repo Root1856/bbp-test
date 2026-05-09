@@ -1,0 +1,11 @@
+name: path-trav-test
+on:
+  workflow_dispatch:
+jobs:
+  test1:
+    uses: Root1856/bbp-test/../bbp-test/.github/workflows/dispatch.yml@main
+  test2:
+    uses: ./.github/workflows/../workflows/dispatch.yml
+  test3:
+    uses: ./../../etc/passwd
+
