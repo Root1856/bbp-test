@@ -1,0 +1,11 @@
+name: cancel-target
+on:
+  workflow_dispatch:
+concurrency:
+  group: github-docs-main-build
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: sleep 30
