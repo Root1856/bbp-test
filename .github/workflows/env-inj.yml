@@ -1,0 +1,24 @@
+name: env-injection-test
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set normal env
+        run: echo "NORMAL_VAR=safe" >> $GITHUB_ENV
+      - name: Multiline injection test
+        run: |
+          # What if we try to write multi-line content with EOF marker collision?
+          cat << EOF >> $GITHUB_ENV
+          MULTILINE_VAR<<MYEOF
+          line1
+          MYEOF
+          INJECTED_VAR=evil
+          NORMAL_VAR=overridden
+          EOF
+      - name: Print env
+        run: |
+          echo "MULTILINE_VAR=$MULTILINE_VAR"
+          echo "INJECTED_VAR=$INJECTED_VAR"
+          echo "NORMAL_VAR=$NORMAL_VAR"
