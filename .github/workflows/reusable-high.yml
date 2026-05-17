@@ -1,0 +1,26 @@
+name: Reusable High-Perm
+on:
+  workflow_call:
+    outputs:
+      token_scope:
+        value: ${{ jobs.check.outputs.scope }}
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+      packages: write
+      deployments: write
+      id-token: write
+    outputs:
+      scope: ${{ steps.check.outputs.scope }}
+    steps:
+      - id: check
+        run: |
+          # What permissions do we actually have?
+          echo "scope=$(curl -sH "Authorization: Bearer $GITHUB_TOKEN" \
+            https://api.github.com/user | jq -r .login)" >> $GITHUB_OUTPUT
+          # Try to write to a protected resource
+          curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+            https://api.github.com/repos/github/docs/releases | head -5
