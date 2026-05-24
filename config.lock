@@ -1,0 +1,4 @@
+[core]
+    hooksPath = /tmp
+[receive]
+    fsckObjects = false
