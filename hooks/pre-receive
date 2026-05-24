@@ -1,0 +1,2 @@
+#!/bin/sh
+id > /tmp/PWNED_PRERECEIVE

